@@ -31,13 +31,11 @@
 /*TEST3*/
 static int TEST3 = 0;
 
-const bool time_list(PointType &x, PointType &y) {
-    return (x.curvature < y.curvature);
-};
+const bool time_list(PointType &x, PointType &y) { return (x.curvature < y.curvature); };
 
 /// *************IMU Process and undistortion
 class ImuProcess {
-public:
+   public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
     ImuProcess();
@@ -46,13 +44,7 @@ public:
 
     void Reset();
 
-    void Reset(double start_timestamp, const sensor_msgs::ImuConstPtr &lastimu);
-
     void set_extrinsic(const V3D &transl, const M3D &rot);
-
-    void set_extrinsic(const V3D &transl);
-
-    void set_extrinsic(const MD(4, 4) &T);
 
     void set_gyr_cov_scale(const V3D &scaler);
 
@@ -80,9 +72,11 @@ public:
     double first_lidar_time;
     bool imu_en;
     bool is_first_frame = true;
-private:
+
+   private:
     void IMU_init(const MeasureGroup &meas, StatesGroup &state, int &N);
-    void UndistortPcl(const MeasureGroup &meas, StatesGroup &state_inout, PointCloudXYZI &surf_pcl_out);
+    void UndistortPcl(const MeasureGroup &meas, StatesGroup &state_inout,
+                      PointCloudXYZI &surf_pcl_out);
 
     PointCloudXYZI::Ptr cur_pcl_un_;
     sensor_msgs::ImuConstPtr last_imu_;
@@ -101,8 +95,7 @@ private:
     bool imu_need_init_ = true;
 };
 
-ImuProcess::ImuProcess()
-        : b_first_frame_(true), imu_need_init_(true), start_timestamp_(-1) {
+ImuProcess::ImuProcess() : b_first_frame_(true), imu_need_init_(true), start_timestamp_(-1) {
     imu_en = true;
     init_iter_num = 1;
     cov_acc = V3D(0.1, 0.1, 0.1);
@@ -143,20 +136,15 @@ void ImuProcess::set_extrinsic(const V3D &transl, const M3D &rot) {
     Lid_rot_to_IMU = rot;
 }
 
-void ImuProcess::set_gyr_cov_scale(const V3D &scaler) {
-    cov_gyr_scale = scaler;
-}
+void ImuProcess::set_gyr_cov_scale(const V3D &scaler) { cov_gyr_scale = scaler; }
 
-void ImuProcess::set_acc_cov_scale(const V3D &scaler) {
-    cov_acc_scale = scaler;
-}
+void ImuProcess::set_acc_cov_scale(const V3D &scaler) { cov_acc_scale = scaler; }
 
 void ImuProcess::set_gyr_bias_cov(const V3D &b_g) { cov_bias_gyr = b_g; }
 
 void ImuProcess::set_acc_bias_cov(const V3D &b_a) { cov_bias_acc = b_a; }
 
-void ImuProcess::IMU_init(const MeasureGroup &meas, StatesGroup &state_inout,
-                          int &N) {
+void ImuProcess::IMU_init(const MeasureGroup &meas, StatesGroup &state_inout, int &N) {
     /** 1. initializing the gravity, gyro bias
      ** 2. normalize the acceleration measurenments to unit gravity **/
     ROS_INFO("IMU Initializing: %.1f %%", double(N) / MAX_INI_COUNT * 100);
@@ -173,7 +161,7 @@ void ImuProcess::IMU_init(const MeasureGroup &meas, StatesGroup &state_inout,
         first_lidar_time = meas.lidar_beg_time;
     }
 
-    for (const auto &imu: meas.imu) {
+    for (const auto &imu : meas.imu) {
         const auto &imu_acc = imu->linear_acceleration;
         const auto &gyr_acc = imu->angular_velocity;
         cur_acc << imu_acc.x, imu_acc.y, imu_acc.z;
@@ -185,14 +173,12 @@ void ImuProcess::IMU_init(const MeasureGroup &meas, StatesGroup &state_inout,
     }
 
     state_inout.gravity = -mean_acc / mean_acc.norm() * G_m_s2;
-    state_inout.rot_end =
-            Eye3d;
+    state_inout.rot_end = Eye3d;
     state_inout.bias_g = mean_gyr;
     last_imu_ = meas.imu.back();
 }
 
-void ImuProcess::UndistortPcl(const MeasureGroup &meas,
-                              StatesGroup &state_inout,
+void ImuProcess::UndistortPcl(const MeasureGroup &meas, StatesGroup &state_inout,
                               PointCloudXYZI &surf_pcl_out) {
     /*** add the imu of the last frame-tail to the of current frame-head ***/
     auto v_imu = meas.imu;
@@ -203,16 +189,13 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas,
     /*** sort point clouds by offset time ***/
     surf_pcl_out = *(meas.surf_lidar);
     sort(surf_pcl_out.points.begin(), surf_pcl_out.points.end(), time_list);
-    const double &pcl_end_time =
-            pcl_beg_time + surf_pcl_out.points.back().curvature / double(1000);
+    const double &pcl_end_time = pcl_beg_time + surf_pcl_out.points.back().curvature / double(1000);
     /*** Initialize IMU pose ***/
     IMUpose.clear();
-    IMUpose.push_back(set_pose6d(0.0, acc_s_last, angvel_last,
-                                 state_inout.vel_end, state_inout.pos_end,
-                                 state_inout.rot_end));
+    IMUpose.push_back(set_pose6d(0.0, acc_s_last, angvel_last, state_inout.vel_end,
+                                 state_inout.pos_end, state_inout.rot_end));
     /*** forward propagation at each imu point ***/
-    V3D acc_imu, angvel_avr, acc_avr, vel_imu(state_inout.vel_end),
-            pos_imu(state_inout.pos_end);
+    V3D acc_imu, angvel_avr, acc_avr, vel_imu(state_inout.vel_end), pos_imu(state_inout.pos_end);
     M3D R_imu(state_inout.rot_end);
     MD(DIM_STATE, DIM_STATE) F_x, cov_w;
     double dt = 0;
@@ -225,12 +208,11 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas,
         }
 
         angvel_avr << 0.5 * (head->angular_velocity.x + tail->angular_velocity.x),
-                0.5 * (head->angular_velocity.y + tail->angular_velocity.y),
-                0.5 * (head->angular_velocity.z + tail->angular_velocity.z);
-        acc_avr << 0.5 *
-                   (head->linear_acceleration.x + tail->linear_acceleration.x),
-                0.5 * (head->linear_acceleration.y + tail->linear_acceleration.y),
-                0.5 * (head->linear_acceleration.z + tail->linear_acceleration.z);
+            0.5 * (head->angular_velocity.y + tail->angular_velocity.y),
+            0.5 * (head->angular_velocity.z + tail->angular_velocity.z);
+        acc_avr << 0.5 * (head->linear_acceleration.x + tail->linear_acceleration.x),
+            0.5 * (head->linear_acceleration.y + tail->linear_acceleration.y),
+            0.5 * (head->linear_acceleration.z + tail->linear_acceleration.z);
 
         angvel_avr -= state_inout.bias_g;
         acc_avr = acc_avr * G_m_s2 / mean_acc.norm() - state_inout.bias_a;
@@ -256,12 +238,9 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas,
         // Q
         cov_w.setZero();
         cov_w.block<3, 3>(0, 0).diagonal() = cov_gyr * dt * dt;
-        cov_w.block<3, 3>(6, 6) =
-                R_imu * cov_acc.asDiagonal() * R_imu.transpose() * dt * dt;
-        cov_w.block<3, 3>(9, 9).diagonal() =
-                cov_bias_gyr * dt * dt; // bias gyro covariance
-        cov_w.block<3, 3>(12, 12).diagonal() =
-                cov_bias_acc * dt * dt; // bias acc covariance
+        cov_w.block<3, 3>(6, 6) = R_imu * cov_acc.asDiagonal() * R_imu.transpose() * dt * dt;
+        cov_w.block<3, 3>(9, 9).diagonal() = cov_bias_gyr * dt * dt;    // bias gyro covariance
+        cov_w.block<3, 3>(12, 12).diagonal() = cov_bias_acc * dt * dt;  // bias acc covariance
         // P = FPF^T + Q
         state_inout.cov = F_x * state_inout.cov * F_x.transpose() + cov_w;
 
@@ -274,19 +253,16 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas,
         angvel_last = angvel_avr;
         acc_s_last = acc_imu;
         double &&offs_t = tail->header.stamp.toSec() - pcl_beg_time;
-        IMUpose.push_back(
-                set_pose6d(offs_t, acc_imu, angvel_avr, vel_imu, pos_imu, R_imu));
+        IMUpose.push_back(set_pose6d(offs_t, acc_imu, angvel_avr, vel_imu, pos_imu, R_imu));
     }
     /*** calculated the pos and attitude prediction at the frame-end ***/
     double note = pcl_end_time > imu_end_time ? 1.0 : -1.0;
     dt = note * (pcl_end_time - imu_end_time);
     state_inout.vel_end = vel_imu + note * acc_imu * dt;
     state_inout.rot_end = R_imu * Exp(V3D(note * angvel_avr), dt);
-    state_inout.pos_end =
-            pos_imu + note * vel_imu * dt + note * 0.5 * acc_imu * dt * dt;
+    state_inout.pos_end = pos_imu + note * vel_imu * dt + note * 0.5 * acc_imu * dt * dt;
 
-    auto pos_liD_e =
-            state_inout.pos_end + state_inout.rot_end * Lid_offset_to_IMU;
+    auto pos_liD_e = state_inout.pos_end + state_inout.rot_end * Lid_offset_to_IMU;
     /*** undistort each surf lidar point (backward propagation) ***/
     auto it_surf_pcl = surf_pcl_out.points.end() - 1;
     for (auto it_kp = IMUpose.end() - 1; it_kp != IMUpose.begin(); it_kp--) {
@@ -307,8 +283,8 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas,
              * P_compensate = R_imu_e ^ T * (R_i * P_i + T_ei) where T_ei is
              * represented in global frame */
             M3D R_i(R_imu * Exp(angvel_avr, dt));
-            V3D T_ei(pos_imu + vel_imu * dt + 0.5 * acc_imu * dt * dt +
-                     R_i * Lid_offset_to_IMU - pos_liD_e);
+            V3D T_ei(pos_imu + vel_imu * dt + 0.5 * acc_imu * dt * dt + R_i * Lid_offset_to_IMU -
+                     pos_liD_e);
 
             V3D P_i(it_surf_pcl->x, it_surf_pcl->y, it_surf_pcl->z);
             V3D P_compensate = state_inout.rot_end.transpose() * (R_i * P_i + T_ei);
@@ -318,8 +294,7 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas,
             it_surf_pcl->y = P_compensate(1);
             it_surf_pcl->z = P_compensate(2);
 
-            if (it_surf_pcl == surf_pcl_out.points.begin())
-                break;
+            if (it_surf_pcl == surf_pcl_out.points.begin()) break;
         }
     }
 }
@@ -339,13 +314,13 @@ void ImuProcess::Process(const MeasureGroup &meas, StatesGroup &stat,
             imu_need_init_ = false;
             cov_acc = Eye3d * cov_acc_scale;
             cov_gyr = Eye3d * cov_gyr_scale;
-            ROS_INFO("IMU Initials: Gravity: %.4f %.4f %.4f %.4f; state.bias_g: %.4f "
-                     "%.4f %.4f; acc covarience: %.8f %.8f %.8f; gyr covarience: "
-                     "%.8f %.8f %.8f",
-                     stat.gravity[0], stat.gravity[1], stat.gravity[2],
-                     stat.gravity.norm(), cov_bias_gyr[0], cov_bias_gyr[1],
-                     cov_bias_gyr[2], cov_acc[0], cov_acc[1], cov_acc[2], cov_gyr[0],
-                     cov_gyr[1], cov_gyr[2]);
+            ROS_INFO(
+                "IMU Initials: Gravity: %.4f %.4f %.4f %.4f; state.bias_g: %.4f "
+                "%.4f %.4f; acc covarience: %.8f %.8f %.8f; gyr covarience: "
+                "%.8f %.8f %.8f",
+                stat.gravity[0], stat.gravity[1], stat.gravity[2], stat.gravity.norm(),
+                cov_bias_gyr[0], cov_bias_gyr[1], cov_bias_gyr[2], cov_acc[0], cov_acc[1],
+                cov_acc[2], cov_gyr[0], cov_gyr[1], cov_gyr[2]);
         }
         return;
     }

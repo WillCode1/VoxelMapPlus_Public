@@ -88,8 +88,7 @@ struct StatesGroup {
 
     StatesGroup operator+(const Matrix<double, DIM_STATE, 1> &state_add) {
         StatesGroup a;
-        a.rot_end =
-                this->rot_end * Exp(state_add(0, 0), state_add(1, 0), state_add(2, 0));
+        a.rot_end = this->rot_end * Exp(state_add(0, 0), state_add(1, 0), state_add(2, 0));
         a.pos_end = this->pos_end + state_add.block<3, 1>(3, 0);
         a.vel_end = this->vel_end + state_add.block<3, 1>(6, 0);
         a.bias_g = this->bias_g + state_add.block<3, 1>(9, 0);
@@ -100,8 +99,7 @@ struct StatesGroup {
     };
 
     StatesGroup &operator+=(const Matrix<double, DIM_STATE, 1> &state_add) {
-        this->rot_end =
-                this->rot_end * Exp(state_add(0, 0), state_add(1, 0), state_add(2, 0));
+        this->rot_end = this->rot_end * Exp(state_add(0, 0), state_add(1, 0), state_add(2, 0));
         this->pos_end += state_add.block<3, 1>(3, 0);
         this->vel_end += state_add.block<3, 1>(6, 0);
         this->bias_g += state_add.block<3, 1>(9, 0);
@@ -135,6 +133,8 @@ struct StatesGroup {
     V3D bias_g;  // gyroscope bias
     V3D bias_a;  // accelerator bias
     V3D gravity; // the estimated gravity acceleration
+    // M3D offset_R_L_I;
+    // V3D offset_T_L_I;
     Matrix<double, DIM_STATE, DIM_STATE> cov; // states covariance
 };
 
