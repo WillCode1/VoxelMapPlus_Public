@@ -33,9 +33,6 @@
 
 #define INIT_TIME (0.0)
 #define CALIB_ANGLE_COV (0.01)
-bool calib_laser = false;
-bool write_kitti_log = false;
-std::string result_path = "";
 // params for imu
 bool imu_en = true;
 std::vector<double> extrinT;
@@ -108,32 +105,10 @@ const bool var_contrast(pointWithCov &x, pointWithCov &y) {
     return (x.cov.diagonal().norm() < y.cov.diagonal().norm());
 };
 
-inline void kitti_log(FILE *fp) {
-    Eigen::Matrix4d T_lidar_to_cam;
-    T_lidar_to_cam << 0.00042768, -0.999967, -0.0080845, -0.01198, -0.00721062, 0.0080811998,
-        -0.99994131, -0.0540398, 0.999973864, 0.00048594, -0.0072069, -0.292196, 0, 0, 0, 1.0;
-    V3D rot_ang(Log(state.rot_end));
-    MD(4, 4) T;
-    T.block<3, 3>(0, 0) = state.rot_end;
-    T.block<3, 1>(0, 3) = state.pos_end;
-    T(3, 0) = 0;
-    T(3, 1) = 0;
-    T(3, 2) = 0;
-    T(3, 3) = 1;
-    T = T_lidar_to_cam * T * T_lidar_to_cam.inverse();
-    for (int i = 0; i < 3; i++) {
-        if (i == 2)
-            fprintf(fp, "%lf %lf %lf %lf", T(i, 0), T(i, 1), T(i, 2), T(i, 3));
-        else
-            fprintf(fp, "%lf %lf %lf %lf ", T(i, 0), T(i, 1), T(i, 2), T(i, 3));
-    }
-    fprintf(fp, "\n");
-    fflush(fp);
-}
-
 void RGBpointBodyToWorld(PointType const *const pi, PointType *const po) {
     V3D p_body(pi->x, pi->y, pi->z);
-    V3D p_global(state.rot_end * (p_body) + state.pos_end);
+    V3D p_global(state.rot_end * (state.offset_R_L_I*p_body + state.offset_T_L_I) + state.pos_end);
+    // V3D p_global(state.rot_end * (p_body) + state.pos_end);
     po->x = p_global(0);
     po->y = p_global(1);
     po->z = p_global(2);
@@ -144,8 +119,6 @@ void RGBpointBodyToWorld(PointType const *const pi, PointType *const po) {
     po->normal_z = pi->normal_z;
     float intensity = pi->intensity;
     intensity = intensity - floor(intensity);
-
-    int reflection_map = intensity * 10000;
 }
 
 void standard_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg) {
@@ -377,7 +350,6 @@ int main(int argc, char **argv) {
 
     // preprocess params
     nh.param<double>("preprocess/blind", p_pre->blind, 0.01);
-    nh.param<bool>("preprocess/calib_laser", calib_laser, false);
     nh.param<int>("preprocess/lidar_type", p_pre->lidar_type, AVIA);
     nh.param<int>("preprocess/scan_line", p_pre->N_SCANS, 6);
     nh.param<int>("preprocess/point_filter_num", p_pre->point_filter_num, 1);
@@ -390,10 +362,6 @@ int main(int argc, char **argv) {
     nh.param<int>("visualization/pub_point_cloud_skip", pub_point_cloud_skip, 1);
     nh.param<bool>("visualization/dense_map_enable", dense_map_en, false);
 
-    // result params
-    nh.param<bool>("Result/write_kitti_log", write_kitti_log, false);
-    nh.param<string>("Result/result_path", result_path,
-                     "/home/ycj/catkin_github/src/VoxelMapPlus/Log/kitt_log.txt");
     cout << "p_pre->lidar_type " << p_pre->lidar_type << endl;
 
     // 接收Lidar消息
@@ -435,7 +403,9 @@ int main(int argc, char **argv) {
     extR << extrinR[0], extrinR[1], extrinR[2], extrinR[3], extrinR[4], extrinR[5], extrinR[6],
         extrinR[7], extrinR[8];
     p_imu->set_extrinsic(extT, extR);
-    
+    state.offset_R_L_I = extR;
+    state.offset_T_L_I = extT;
+
     p_imu->set_gyr_cov_scale(V3D(gyr_cov_scale, gyr_cov_scale, gyr_cov_scale));
     p_imu->set_acc_cov_scale(V3D(acc_cov_scale, acc_cov_scale, acc_cov_scale));
     p_imu->set_gyr_bias_cov(V3D(0.00001, 0.00001, 0.00001));
@@ -445,13 +415,6 @@ int main(int argc, char **argv) {
     H_T_H.setZero();
     I_STATE.setIdentity();
 
-    /*** debug record ***/
-    FILE *fp_kitti;
-
-    if (write_kitti_log) {
-        fp_kitti = fopen(result_path.c_str(), "w");
-    }
-
     signal(SIGINT, SigHandle);
     ros::Rate rate(5000);
     bool status = ros::ok();
@@ -459,11 +422,6 @@ int main(int argc, char **argv) {
     // for Plane Map
     bool init_map = false;
     std::unordered_map<VOXEL_LOC, UnionFindNode *> voxel_map;
-
-    // TEST4
-    bool enable_write = false;
-    ofstream foutC;
-    foutC.open("/home/yyf/ws4voxelmapplus/datas/s02_time.txt");
 
     while (status) {
         if (flg_exit) {
@@ -497,22 +455,6 @@ int main(int argc, char **argv) {
                                       undistort_end - undistort_start)
                                       .count() *
                                   1000;
-            // only for kitti
-            if (calib_laser) {
-                // calib the vertical angle for kitti dataset
-                for (size_t i = 0; i < surf_feats_undistort->size(); i++) {
-                    PointType pi = surf_feats_undistort->points[i];
-                    double range = sqrt(pi.x * pi.x + pi.y * pi.y + pi.z * pi.z);
-                    double calib_vertical_angle = deg2rad(0.15);
-                    double vertical_angle = asin(pi.z / range) + calib_vertical_angle;
-                    double horizon_angle = atan2(pi.y, pi.x);
-                    pi.z = range * sin(vertical_angle);
-                    double project_len = range * cos(vertical_angle);
-                    pi.x = project_len * cos(horizon_angle);
-                    pi.y = project_len * sin(horizon_angle);
-                    surf_feats_undistort->points[i] = pi;
-                }
-            }
             state_propagat = state;
 
             if (is_first_frame) {
@@ -552,19 +494,15 @@ int main(int argc, char **argv) {
 
                     M3D point_crossmat;
                     point_crossmat << SKEW_SYM_MATRX(point_this);
-                    cov = state.rot_end * cov * state.rot_end.transpose() +
-                          (-point_crossmat) * state.cov.block<3, 3>(0, 0) *
-                              (-point_crossmat).transpose() +
-                          state.cov.block<3, 3>(3, 3);
+                    // TODO: check this, maybe cov = state.rot_end * (cov + (-point_crossmat) * state.cov.block<3, 3>(0, 0) * (-point_crossmat).transpose()) * state.rot_end.transpose() + state.cov.block<3, 3>(3, 3);
+                    // cov = state.rot_end * cov * state.rot_end.transpose() + (-point_crossmat) * state.cov.block<3, 3>(0, 0) * (-point_crossmat).transpose() + state.cov.block<3, 3>(3, 3);   // org
+                    cov = (state.rot_end * state.offset_R_L_I) * cov * (state.rot_end * state.offset_R_L_I).transpose() + (-point_crossmat) * state.cov.block<3, 3>(0, 0) * (-point_crossmat).transpose() + state.cov.block<3, 3>(3, 3);
                     pv.cov = cov;
                     pv_list.push_back(pv);
                 }
 
                 BuildVoxelMap(pv_list, voxel_map);
                 std::cout << "build voxel map" << std::endl;
-                if (write_kitti_log) {
-                    kitti_log(fp_kitti);
-                }
 
                 scanIdx++;
                 if (publish_voxel_map) {
@@ -605,11 +543,7 @@ int main(int argc, char **argv) {
                     point_this[2] = 0.001;
                 }
                 M3D cov;
-                if (calib_laser) {
-                    calcBodyCov(point_this, ranging_cov, CALIB_ANGLE_COV, cov);
-                } else {
-                    calcBodyCov(point_this, ranging_cov, angle_cov, cov);
-                }
+                calcBodyCov(point_this, ranging_cov, angle_cov, cov);
                 M3D point_crossmat;
                 point_crossmat << SKEW_SYM_MATRX(point_this);
                 crossmat_list.push_back(point_crossmat);
@@ -642,8 +576,9 @@ int main(int argc, char **argv) {
                     M3D point_crossmat = crossmat_list[i];
                     M3D rot_var = state.cov.block<3, 3>(0, 0);
                     M3D t_var = state.cov.block<3, 3>(3, 3);
-                    cov = state.rot_end * cov * state.rot_end.transpose() +
-                          (-point_crossmat) * rot_var * (-point_crossmat.transpose()) + t_var;
+                    // TODO: check this, maybe cov = state.rot_end * (cov + (-point_crossmat) * state.cov.block<3, 3>(0, 0) * (-point_crossmat).transpose()) * state.rot_end.transpose() + state.cov.block<3, 3>(3, 3);
+                    // cov = state.rot_end * cov * state.rot_end.transpose() + (-point_crossmat) * rot_var * (-point_crossmat.transpose()) + t_var;
+                    cov = (state.rot_end * state.offset_R_L_I) * cov * (state.rot_end * state.offset_R_L_I).transpose() + (-point_crossmat) * rot_var * (-point_crossmat.transpose()) + t_var;
                     pv.cov = cov;
                     pv_list.push_back(pv);
                 }
@@ -668,15 +603,11 @@ int main(int argc, char **argv) {
 
                 /*** 6.2.1 Computation of Jacobian matrix H and Residual r ***/
                 for (int i = 0; i < effct_feat_num; i++) {
-                    V3D laser_p = ptpl_list[i].point;
-                    // V3D laser_p = extR * ptpl_list[i].point + extT;
+                    // V3D laser_p = ptpl_list[i].point;
+                    V3D laser_p = state.offset_R_L_I * ptpl_list[i].point + state.offset_T_L_I;
                     V3D point_this(laser_p(0), laser_p(1), laser_p(2));
                     M3D cov;
-                    if (calib_laser) {
-                        calcBodyCov(point_this, ranging_cov, CALIB_ANGLE_COV, cov);
-                    } else {
-                        calcBodyCov(point_this, ranging_cov, angle_cov, cov);
-                    }
+                    calcBodyCov(point_this, ranging_cov, angle_cov, cov);
 
                     M3D point_crossmat;
                     point_crossmat << SKEW_SYM_MATRX(point_this);
@@ -700,6 +631,7 @@ int main(int argc, char **argv) {
                             point_world(2) * (1 - dist / (Omega_norm * Omega_norm)), 1;
                     }
                     J_abd /= Omega_norm;
+                    // TODO: check this
                     J_pw = Omega.transpose() * state.rot_end / Omega_norm;
                     double sigma_l = J_abd * ptpl_list[i].plane_cov * J_abd.transpose();
                     R_inv(i) = 1.0 / (sigma_l + J_pw * cov * J_pw.transpose());
@@ -727,13 +659,12 @@ int main(int argc, char **argv) {
                     H_init.block<3, 3>(0, 0) = M3D::Identity();
                     H_init.block<3, 3>(3, 3) = M3D::Identity();
                     H_init.block<3, 3>(6, 15) = M3D::Identity();
+                    // TODO: check this
                     z_init.block<3, 1>(0, 0) = -Log(state.rot_end);
                     z_init.block<3, 1>(0, 0) = -state.pos_end;
 
                     auto H_init_T = H_init.transpose();
-                    auto &&K_init =
-                        state.cov * H_init_T *
-                        (H_init * state.cov * H_init_T + 0.0001 * MD(9, 9)::Identity()).inverse();
+                    auto &&K_init = state.cov * H_init_T * (H_init * state.cov * H_init_T + 0.0001 * MD(9, 9)::Identity()).inverse();
                     solution = K_init * z_init;
 
                     state.resetpose();
@@ -802,10 +733,9 @@ int main(int argc, char **argv) {
                     world_lidar->points[i].z;
                 M3D point_crossmat = crossmat_list[i];
                 M3D cov = body_var[i];
-                cov = state.rot_end * cov * state.rot_end.transpose() +
-                      (-point_crossmat) * state.cov.block<3, 3>(0, 0) *
-                          (-point_crossmat).transpose() +
-                      state.cov.block<3, 3>(3, 3);
+                // TODO: check this, maybe cov = state.rot_end * (cov + (-point_crossmat) * state.cov.block<3, 3>(0, 0) * (-point_crossmat).transpose()) * state.rot_end.transpose() + state.cov.block<3, 3>(3, 3);
+                // cov = state.rot_end * cov * state.rot_end.transpose() + (-point_crossmat) * state.cov.block<3, 3>(0, 0) * (-point_crossmat).transpose() + state.cov.block<3, 3>(3, 3);
+                cov = (state.rot_end * state.offset_R_L_I) * cov * (state.rot_end * state.offset_R_L_I).transpose() + (-point_crossmat) * state.cov.block<3, 3>(0, 0) * (-point_crossmat).transpose() + state.cov.block<3, 3>(3, 3);
                 pv.cov = cov;
                 pv_list.push_back(pv);
             }
@@ -820,14 +750,6 @@ int main(int argc, char **argv) {
             total_time = t_downsample + scan_match_time + solve_time + map_incremental_time +
                          undistort_time + calc_point_cov_time;
 
-            if (enable_write && scanIdx % 10 == 0) {
-                foutC << std::fixed << std::setprecision(10) << Measures.lidar_beg_time << " ";
-                foutC << state.pos_end[0] << " " << state.pos_end[1] << " " << state.pos_end[2]
-                      << " ";
-
-                foutC << total_time << "  ";
-                foutC << 0 << " " << 0 << " " << 0 << " " << 0 << endl;
-            }
             /*** 8. Publish functions:  ***/
             publish_odometry(pubOdomAftMapped);
             publish_path(pubPath);
@@ -896,9 +818,6 @@ int main(int argc, char **argv) {
             cout << "[ Time ]: "
                  << " average total " << aver_time_consu << endl;
             cout << "--------------------------------------------" << endl;
-            if (write_kitti_log) {
-                kitti_log(fp_kitti);
-            }
 
             scanIdx++;
         }

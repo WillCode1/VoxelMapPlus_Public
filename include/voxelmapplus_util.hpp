@@ -582,8 +582,8 @@ void TransformLidar(const StatesGroup &state, const shared_ptr<ImuProcess> &p_im
     for (size_t i = 0; i < input_cloud->size(); i++) {
         pcl::PointXYZINormal p_c = input_cloud->points[i];
         V3D p(p_c.x, p_c.y, p_c.z);
-        // V3D p_global(state.rot_end * (state.offset_R_L_I * p + state.offset_T_L_I) + state.pos_end);
-        p = state.rot_end * p + state.pos_end;
+        p = state.rot_end * (state.offset_R_L_I * p + state.offset_T_L_I) + state.pos_end;
+        // p = state.rot_end * p + state.pos_end;
         pcl::PointXYZI pi;
         pi.x = static_cast<float>(p(0));
         pi.y = static_cast<float>(p(1));

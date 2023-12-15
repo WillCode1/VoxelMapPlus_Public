@@ -7,7 +7,6 @@ preprocess:
   scan_line: 64
   blind: 0.1
   point_filter_num: 1
-  calib_laser: false
 
 mapping:
   down_sample_size: 0.1
@@ -38,7 +37,3 @@ visualization:
   pub_point_cloud: true
   dense_map_enable: false
   pub_point_cloud_skip: 1            # publish one points per five points
-
-Result:
-  write_kitti_log: false
-  result_path: ""

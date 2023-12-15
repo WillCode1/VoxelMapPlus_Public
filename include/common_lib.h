@@ -133,8 +133,8 @@ struct StatesGroup {
     V3D bias_g;  // gyroscope bias
     V3D bias_a;  // accelerator bias
     V3D gravity; // the estimated gravity acceleration
-    // M3D offset_R_L_I;
-    // V3D offset_T_L_I;
+    M3D offset_R_L_I;
+    V3D offset_T_L_I;
     Matrix<double, DIM_STATE, DIM_STATE> cov; // states covariance
 };
 
